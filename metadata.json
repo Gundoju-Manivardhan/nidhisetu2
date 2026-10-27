@@ -1,0 +1,8 @@
+{
+  "name": "NIDHISETU - AICTE Security Deposit & FDR Portal",
+  "description": "Secure Deposits. Smarter Decisions. Complete Accountability. Streamlined Security Deposit and Fixed Deposit Receipt (FDR) Portal for AICTE Regulation Bureau.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "permissions": []
+}
