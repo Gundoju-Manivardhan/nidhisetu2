@@ -73,14 +73,14 @@ export function WorkQueuePage() {
       {/* Smart Action Queue: Rules-based urgency sorting */}
       <div className="mb-6">
         <Card
-          title={`Smart Action Queue — Priority Ranked (${smartQueue.data?.length ?? 0})`}
+          title={`Smart Action Queue — Priority Ranked (${Array.isArray(smartQueue.data) ? smartQueue.data.length : 0})`}
           description="Transparent, rules-based priority order generated from upcoming deadlines, discrepancy findings, and unreviewed submissions."
         >
           {smartQueue.isLoading ? (
             <LoadingBlock label="Evaluating rules and urgency priorities" />
           ) : (
             <div className="divide-y divide-line">
-              {(smartQueue.data ?? []).slice(0, 6).map((item: any) => (
+              {(Array.isArray(smartQueue.data) ? smartQueue.data : []).slice(0, 6).map((item: any) => (
                 <div key={item.fdr_id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">

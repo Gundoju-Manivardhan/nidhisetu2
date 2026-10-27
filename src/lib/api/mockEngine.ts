@@ -12,7 +12,9 @@ import {
 } from "./mockData";
 import type {
   AuditEvent,
+  Clearance,
   DocumentSummary,
+  EvidenceField,
   FdrDetail,
   FdrListItem,
   Finding,
@@ -204,8 +206,7 @@ export async function handleMockApiRequest(
   const cleanPath = path.split("?")[0];
   const query = options.query || {};
 
-  // Artificial slight delay for realistic snappy response
-  await new Promise((r) => setTimeout(r, 40));
+  await new Promise((r) => setTimeout(r, 30));
 
   // --- /meta ---
   if (cleanPath === "/meta") {
@@ -236,6 +237,43 @@ export async function handleMockApiRequest(
   if (cleanPath === "/auth/logout" && method === "POST") {
     mockStore.setCurrentUser(null);
     return { ok: true };
+  }
+
+  // --- /smart-action-queue ---
+  if (cleanPath === "/smart-action-queue") {
+    const queueItems = [
+      {
+        fdr_id: "fdr-coastal-001",
+        fdr_number_masked: "•••••••4821",
+        issuer_bank: "State Bank of India",
+        institution_name: "Coastal Institute of Technology",
+        urgency_level: "HIGH",
+        priority_score: 88,
+        primary_reason: "DATA-001: Declared ₹25,00,000 differs from extracted ₹20,00,000 in document.",
+        suggested_action: "Review highlighted PDF evidence and seek institution clarification.",
+      },
+      {
+        fdr_id: "fdr-coastal-002",
+        fdr_number_masked: "•••••••9044",
+        issuer_bank: "Bank of Baroda",
+        institution_name: "Coastal Institute of Technology",
+        urgency_level: "CRITICAL",
+        priority_score: 95,
+        primary_reason: "MAT-001: Deposit maturing in 12 days. Replacement pending.",
+        suggested_action: "Record replacement instrument or initiate statutory renewal.",
+      },
+      {
+        fdr_id: "fdr-highland-001",
+        fdr_number_masked: "•••••••7712",
+        issuer_bank: "Punjab National Bank",
+        institution_name: "Highland School of Engineering",
+        urgency_level: "ROUTINE",
+        priority_score: 62,
+        primary_reason: "Release case rel-highland-001 awaiting Finance Bureau verification.",
+        suggested_action: "Coordinate with Finance Bureau officer for final release signoff.",
+      },
+    ];
+    return queueItems;
   }
 
   // --- /overview ---
@@ -325,172 +363,18 @@ export async function handleMockApiRequest(
     return RULE_CATALOG;
   }
 
-  // --- /scenarios ---
-  if (cleanPath === "/scenarios") {
+  // --- /verification/scenarios & /scenarios ---
+  if (cleanPath === "/verification/scenarios" || cleanPath === "/scenarios") {
     return SCENARIO_CATALOG;
   }
 
-  // --- /releases/policy ---
-  if (cleanPath === "/releases/policy") {
+  // --- /release-policy & /releases/policy ---
+  if (cleanPath === "/release-policy" || cleanPath === "/releases/policy") {
     return RELEASE_POLICY;
   }
 
-  // --- /fdrs (List and Create) ---
-  if (cleanPath === "/fdrs") {
-    if (method === "POST") {
-      const body = (options.body || {}) as Partial<FdrDetail> & {
-        fdr_number?: string;
-        institution_id?: string;
-      };
-      const session = mockStore.getCurrentSession();
-      const inst =
-        mockStore.institutions.find((i) => i.id === body.institution_id) ||
-        mockStore.institutions.find((i) => i.id === session?.institution_ids[0]) ||
-        mockStore.institutions[0];
-
-      const rawNumber = body.fdr_number || "FDR-" + Math.floor(1000 + Math.random() * 9000);
-      const masked = "•••••••" + rawNumber.slice(-4);
-      const newFdr: FdrDetail = {
-        id: `fdr-${Date.now()}`,
-        institution: inst,
-        issuer_bank: body.issuer_bank || "State Bank of India",
-        branch: body.branch || "Central Branch",
-        ifsc: body.ifsc || "SBIN0001000",
-        fdr_number_masked: masked,
-        principal_amount: String(body.principal_amount || "1000000.00"),
-        currency: body.currency || "INR",
-        interest_rate: body.interest_rate || "7.00%",
-        issue_date: body.issue_date || new Date().toISOString().split("T")[0],
-        maturity_date:
-          body.maturity_date ||
-          new Date(Date.now() + 365 * 86400000 * 3).toISOString().split("T")[0],
-        days_remaining: 1095,
-        lien_beneficiary: body.lien_beneficiary || "AICTE New Delhi",
-        status: {
-          submission_status: "DRAFT",
-          document_processing_status: "PENDING",
-          bank_verification_status: "PENDING",
-          review_status: "DRAFT",
-          instrument_status: "PENDING",
-          lien_status: "PENDING",
-        },
-        assigned_officer_id: null,
-        version: 1,
-        attention_level: "ROUTINE",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        evidence_fields: [],
-        documents: [],
-        verification_checks: [],
-        findings: [],
-        review_decisions: [],
-        links: [],
-        release_request_id: null,
-        permitted_actions: ["UPLOAD", "SUBMIT", "EDIT"],
-      };
-
-      mockStore.fdrs.unshift(newFdr);
-      mockStore.addAuditEvent("FDR", newFdr.id, "DRAFT_CREATED", "SUCCESS", "New FDR draft initialized");
-      mockStore.save();
-      return newFdr;
-    }
-
-    // List filtering
-    let list = mockStore.fdrs.map((f) => mockStore.toListItem(f));
-    const session = mockStore.getCurrentSession();
-    if (session?.workspace === "institution" && session.institution_ids.length > 0) {
-      list = list.filter((i) => session.institution_ids.includes(i.institution_id));
-    }
-    if (query.q) {
-      const q = String(query.q).toLowerCase();
-      list = list.filter(
-        (i) =>
-          i.institution_name.toLowerCase().includes(q) ||
-          i.issuer_bank.toLowerCase().includes(q) ||
-          i.fdr_number_masked.toLowerCase().includes(q) ||
-          i.aicte_id.toLowerCase().includes(q),
-      );
-    }
-    if (query.review_status) {
-      list = list.filter((i) => i.status.review_status === query.review_status);
-    }
-    if (query.submission_status) {
-      list = list.filter((i) => i.status.submission_status === query.submission_status);
-    }
-    if (query.instrument_status) {
-      list = list.filter((i) => i.status.instrument_status === query.instrument_status);
-    }
-    if (query.bank_verification_status) {
-      list = list.filter((i) => i.status.bank_verification_status === query.bank_verification_status);
-    }
-    if (query.maturity_band === "30_DAYS") {
-      list = list.filter((i) => i.days_remaining <= 30 && i.days_remaining >= 0);
-    } else if (query.maturity_band === "60_DAYS") {
-      list = list.filter((i) => i.days_remaining <= 60 && i.days_remaining > 30);
-    } else if (query.maturity_band === "90_DAYS") {
-      list = list.filter((i) => i.days_remaining <= 90 && i.days_remaining > 60);
-    }
-
-    return list;
-  }
-
-  // --- /maturities ---
-  if (cleanPath === "/maturities") {
-    const band = query.band || "30_DAYS";
-    let list = mockStore.fdrs.filter((f) => f.days_remaining <= 90 && f.days_remaining >= 0);
-    if (band === "30_DAYS") {
-      list = list.filter((f) => f.days_remaining <= 30);
-    }
-
-    const items: MaturityItem[] = list.map((f) => ({
-      fdr: mockStore.toListItem(f),
-      band: f.days_remaining <= 30 ? "30_DAYS" : "60_DAYS",
-      next_action:
-        f.status.review_status === "ACCEPTED"
-          ? "Request replacement deposit or renewal certificate from institution."
-          : "Complete outstanding scrutiny before processing renewal.",
-      reminders_sent: 1,
-      predecessor_id: f.links.find((l) => l.relationship_type === "REPLACED")?.predecessor_fdr_id || null,
-      successor_id: f.links.find((l) => l.relationship_type === "REPLACED")?.successor_fdr_id || null,
-    }));
-    return items;
-  }
-
-  // --- /maturities/scan ---
-  if (cleanPath === "/maturities/scan" && method === "POST") {
-    mockStore.addAuditEvent(
-      "MATURITY_SCAN",
-      "global",
-      "REMINDER_SCAN_EXECUTED",
-      "SUCCESS",
-      "Automated maturity scan completed. 1 maturing instrument checked. Deduplication prevents re-sending.",
-    );
-    return {
-      status: "COMPLETED",
-      instruments_scanned: mockStore.fdrs.length,
-      maturing_found: 1,
-      reminders_created: 0,
-      note: "Deduplication active: reminder already exists for current cycle.",
-    };
-  }
-
-  // --- /exceptions ---
-  if (cleanPath === "/exceptions") {
-    const allFindings: Finding[] = [];
-    mockStore.fdrs.forEach((f) => {
-      f.findings.forEach((finding) => {
-        allFindings.push({
-          ...finding,
-          institution_name: f.institution.name,
-          fdr_number_masked: f.fdr_number_masked,
-        });
-      });
-    });
-    return allFindings.filter((f) => f.status === "OPEN");
-  }
-
-  // --- /releases (List & Create) ---
-  if (cleanPath === "/releases") {
+  // --- /release-requests & /releases (List & Create) ---
+  if (cleanPath === "/release-requests" || cleanPath === "/releases") {
     if (method === "POST") {
       const body = (options.body || {}) as {
         fdr_id: string;
@@ -606,30 +490,25 @@ export async function handleMockApiRequest(
     return list;
   }
 
-  // --- /releases/:id ---
-  const releaseMatch = cleanPath.match(/^\/releases\/([^/]+)$/);
-  if (releaseMatch) {
-    const relId = releaseMatch[1];
-    const rel = mockStore.releases.find((r) => r.id === relId);
-    if (!rel) throw new Error("Release request not found");
-    return rel;
-  }
-
-  // --- /releases/:id/clearances/:clearanceId ---
-  const clearanceMatch = cleanPath.match(/^\/releases\/([^/]+)\/clearances\/([^/]+)$/);
-  if (clearanceMatch && method === "POST") {
-    const relId = clearanceMatch[1];
-    const clrId = clearanceMatch[2];
-    const { outcome, reason } = (options.body || {}) as { outcome: string; reason: string };
+  // --- /release-requests/:id/clearances/:bureauCode/decide ---
+  const clearanceDecideMatch = cleanPath.match(
+    /^\/(?:release-requests|releases)\/([^/]+)\/clearances\/([^/]+)(?:\/decide)?$/,
+  );
+  if (clearanceDecideMatch && method === "POST") {
+    const [, relId, bureauCode] = clearanceDecideMatch;
+    const { outcome, reason, valid_until } = (options.body || {}) as {
+      outcome: string;
+      reason: string;
+      valid_until?: string;
+    };
     const session = mockStore.getCurrentSession();
 
     const rel = mockStore.releases.find((r) => r.id === relId);
     if (!rel) throw new Error("Release request not found");
 
-    const clr = rel.clearances.find((c) => c.id === clrId);
+    const clr = rel.clearances.find((c) => c.bureau_code === bureauCode || c.id === bureauCode);
     if (!clr) throw new Error("Clearance requirement not found");
 
-    // Authority Check: If officer is PGRC, they can only clear PGRC
     if (
       session &&
       session.bureau_codes.length > 0 &&
@@ -649,9 +528,8 @@ export async function handleMockApiRequest(
     clr.reason = reason || "Clearance criteria fulfilled after statutory review.";
     clr.decided_by = session ? session.email : "officer@aicte.demo";
     clr.decided_at = new Date().toISOString();
-    clr.valid_until = new Date(Date.now() + 365 * 86400000).toISOString();
+    clr.valid_until = valid_until || new Date(Date.now() + 365 * 86400000).toISOString();
 
-    // Re-evaluate blocking reasons
     const pendingClearances = rel.clearances.filter((c) => c.state !== "CLEARED");
     if (pendingClearances.length === 0) {
       rel.status = "READY_FOR_DECISION";
@@ -676,8 +554,8 @@ export async function handleMockApiRequest(
     return rel;
   }
 
-  // --- /releases/:id/prepare ---
-  const prepareMatch = cleanPath.match(/^\/releases\/([^/]+)\/prepare$/);
+  // --- /release-requests/:id/prepare ---
+  const prepareMatch = cleanPath.match(/^\/(?:release-requests|releases)\/([^/]+)\/prepare$/);
   if (prepareMatch && method === "POST") {
     const relId = prepareMatch[1];
     const rel = mockStore.releases.find((r) => r.id === relId);
@@ -701,19 +579,21 @@ export async function handleMockApiRequest(
     return rel;
   }
 
-  // --- /releases/:id/decision ---
-  const decisionMatch = cleanPath.match(/^\/releases\/([^/]+)\/decision$/);
-  if (decisionMatch && method === "POST") {
-    const relId = decisionMatch[1];
-    const { decision, reason } = (options.body || {}) as { decision: string; reason: string };
+  // --- /release-requests/:id/approve or reject or decision ---
+  const actionMatch = cleanPath.match(/^\/(?:release-requests|releases)\/([^/]+)\/(approve|reject|decision)$/);
+  if (actionMatch && method === "POST") {
+    const [, relId, action] = actionMatch;
+    const body = (options.body || {}) as { decision?: string; reason?: string };
+    const decision = action === "approve" ? "APPROVED" : action === "reject" ? "REJECTED" : (body.decision || "APPROVED");
+    const reason = body.reason || "Release sanctioned in accordance with Approval Process Handbook regulations.";
+
     const rel = mockStore.releases.find((r) => r.id === relId);
     if (!rel) throw new Error("Release request not found");
 
     const session = mockStore.getCurrentSession();
     const currentEmail = session ? session.email : "supervisor@aicte.demo";
 
-    // Two-person rule check: the officer who prepared the case cannot be its final approver!
-    if (rel.prepared_by && rel.prepared_by === currentEmail) {
+    if (decision === "APPROVED" && rel.prepared_by && rel.prepared_by === currentEmail) {
       const err = new Error(
         "Two-person separation rule violated: The officer who prepared the release dossier cannot be its final decision approver.",
       );
@@ -730,7 +610,7 @@ export async function handleMockApiRequest(
       id: `appr-${Date.now()}`,
       stage: "COMPETENT_AUTHORITY",
       outcome: rel.status,
-      reason: reason || "Release sanctioned in accordance with Approval Process Handbook regulations.",
+      reason,
       actor_label: session ? session.display_name : "Competent Authority",
       decided_at: new Date().toISOString(),
     });
@@ -750,6 +630,201 @@ export async function handleMockApiRequest(
     );
     mockStore.save();
     return rel;
+  }
+
+  // --- /release-requests/:id ---
+  const releaseMatch = cleanPath.match(/^\/(?:release-requests|releases)\/([^/]+)$/);
+  if (releaseMatch) {
+    const relId = releaseMatch[1];
+    const rel = mockStore.releases.find((r) => r.id === relId);
+    if (!rel) throw new Error("Release request not found");
+    return rel;
+  }
+
+  // --- /fdrs (List and Create) ---
+  if (cleanPath === "/fdrs" || cleanPath === "/fdrs/drafts") {
+    if (method === "POST") {
+      const body = (options.body || {}) as Partial<FdrDetail> & {
+        fdr_number?: string;
+        institution_id?: string;
+      };
+      const session = mockStore.getCurrentSession();
+      const inst =
+        mockStore.institutions.find((i) => i.id === body.institution_id) ||
+        mockStore.institutions.find((i) => i.id === session?.institution_ids[0]) ||
+        mockStore.institutions[0];
+
+      const rawNumber = body.fdr_number || "FDR-" + Math.floor(1000 + Math.random() * 9000);
+      const masked = "•••••••" + rawNumber.slice(-4);
+      const newFdr: FdrDetail = {
+        id: `fdr-${Date.now()}`,
+        institution: inst,
+        issuer_bank: body.issuer_bank || "State Bank of India",
+        branch: body.branch || "Central Branch",
+        ifsc: body.ifsc || "SBIN0001000",
+        fdr_number_masked: masked,
+        principal_amount: String(body.principal_amount || "1000000.00"),
+        currency: body.currency || "INR",
+        interest_rate: body.interest_rate || "7.00%",
+        issue_date: body.issue_date || new Date().toISOString().split("T")[0],
+        maturity_date:
+          body.maturity_date ||
+          new Date(Date.now() + 365 * 86400000 * 3).toISOString().split("T")[0],
+        days_remaining: 1095,
+        lien_beneficiary: body.lien_beneficiary || "AICTE New Delhi",
+        status: {
+          submission_status: "DRAFT",
+          document_processing_status: "PENDING",
+          bank_verification_status: "PENDING",
+          review_status: "DRAFT",
+          instrument_status: "PENDING",
+          lien_status: "PENDING",
+        },
+        assigned_officer_id: null,
+        version: 1,
+        attention_level: "ROUTINE",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        evidence_fields: [],
+        documents: [],
+        verification_checks: [],
+        findings: [],
+        review_decisions: [],
+        links: [],
+        release_request_id: null,
+        permitted_actions: ["UPLOAD", "SUBMIT", "EDIT"],
+      };
+
+      mockStore.fdrs.unshift(newFdr);
+      mockStore.addAuditEvent("FDR", newFdr.id, "DRAFT_CREATED", "SUCCESS", "New FDR draft initialized");
+      mockStore.save();
+      return newFdr;
+    }
+
+    let list = mockStore.fdrs.map((f) => mockStore.toListItem(f));
+    const session = mockStore.getCurrentSession();
+    if (session?.workspace === "institution" && session.institution_ids.length > 0) {
+      list = list.filter((i) => session.institution_ids.includes(i.institution_id));
+    }
+    if (query.q) {
+      const q = String(query.q).toLowerCase();
+      list = list.filter(
+        (i) =>
+          i.institution_name.toLowerCase().includes(q) ||
+          i.issuer_bank.toLowerCase().includes(q) ||
+          i.fdr_number_masked.toLowerCase().includes(q) ||
+          i.aicte_id.toLowerCase().includes(q),
+      );
+    }
+    if (query.review_status) {
+      list = list.filter((i) => i.status.review_status === query.review_status);
+    }
+    if (query.submission_status) {
+      list = list.filter((i) => i.status.submission_status === query.submission_status);
+    }
+    if (query.instrument_status) {
+      list = list.filter((i) => i.status.instrument_status === query.instrument_status);
+    }
+    if (query.bank_verification_status) {
+      list = list.filter((i) => i.status.bank_verification_status === query.bank_verification_status);
+    }
+    if (query.maturity_band === "30_DAYS") {
+      list = list.filter((i) => i.days_remaining <= 30 && i.days_remaining >= 0);
+    } else if (query.maturity_band === "60_DAYS") {
+      list = list.filter((i) => i.days_remaining <= 60 && i.days_remaining > 30);
+    } else if (query.maturity_band === "90_DAYS") {
+      list = list.filter((i) => i.days_remaining <= 90 && i.days_remaining > 60);
+    }
+
+    return list;
+  }
+
+  // --- /maturities ---
+  if (cleanPath === "/maturities") {
+    const band = query.band || "30_DAYS";
+    let list = mockStore.fdrs.filter((f) => f.days_remaining <= 90 && f.days_remaining >= 0);
+    if (band === "30_DAYS") {
+      list = list.filter((f) => f.days_remaining <= 30);
+    }
+
+    const items: MaturityItem[] = list.map((f) => ({
+      fdr: mockStore.toListItem(f),
+      band: f.days_remaining <= 30 ? "30_DAYS" : "60_DAYS",
+      next_action:
+        f.status.review_status === "ACCEPTED"
+          ? "Request replacement deposit or renewal certificate from institution."
+          : "Complete outstanding scrutiny before processing renewal.",
+      reminders_sent: 1,
+      predecessor_id: f.links.find((l) => l.relationship_type === "REPLACED")?.predecessor_fdr_id || null,
+      successor_id: f.links.find((l) => l.relationship_type === "REPLACED")?.successor_fdr_id || null,
+    }));
+    return items;
+  }
+
+  // --- /ops/maturity-scan & /maturities/scan ---
+  if ((cleanPath === "/ops/maturity-scan" || cleanPath === "/maturities/scan") && method === "POST") {
+    mockStore.addAuditEvent(
+      "MATURITY_SCAN",
+      "global",
+      "REMINDER_SCAN_EXECUTED",
+      "SUCCESS",
+      "Automated maturity scan completed. 1 maturing instrument checked. Deduplication prevents re-sending.",
+    );
+    return {
+      status: "COMPLETED",
+      instruments_scanned: mockStore.fdrs.length,
+      maturing_found: 1,
+      reminders_created: 0,
+      created: 0,
+      skipped_duplicates: 1,
+      note: "Deduplication active: reminder already exists for current cycle.",
+    };
+  }
+
+  // --- /exceptions ---
+  if (cleanPath === "/exceptions") {
+    const allFindings: Finding[] = [];
+    mockStore.fdrs.forEach((f) => {
+      f.findings.forEach((finding) => {
+        allFindings.push({
+          ...finding,
+          institution_name: f.institution.name,
+          fdr_number_masked: f.fdr_number_masked,
+        });
+      });
+    });
+    return allFindings.filter((f) => f.status === "OPEN");
+  }
+
+  // --- /findings/:id/disposition ---
+  const findingDispMatch = cleanPath.match(/^\/findings\/([^/]+)\/disposition$/);
+  if (findingDispMatch && method === "POST") {
+    const findingId = findingDispMatch[1];
+    const { status, reason } = (options.body || {}) as { status: string; reason: string };
+    let targetFinding: Finding | null = null;
+    mockStore.fdrs.forEach((f) => {
+      const fd = f.findings.find((item) => item.id === findingId);
+      if (fd) {
+        fd.status = status;
+        fd.disposition_reason = reason;
+        targetFinding = fd;
+      }
+    });
+    mockStore.save();
+    return targetFinding || { id: findingId, status, disposition_reason: reason };
+  }
+
+  // --- /fdrs/:fdrId/draft (PATCH) ---
+  const patchDraftMatch = cleanPath.match(/^\/fdrs\/([^/]+)\/draft$/);
+  if (patchDraftMatch && method === "PATCH") {
+    const fdrId = patchDraftMatch[1];
+    const body = (options.body || {}) as Partial<FdrDetail>;
+    const fdr = mockStore.fdrs.find((f) => f.id === fdrId);
+    if (!fdr) throw new Error("FDR not found");
+    Object.assign(fdr, body);
+    fdr.updated_at = new Date().toISOString();
+    mockStore.save();
+    return fdr;
   }
 
   // --- /fdrs/:id/submit ---
@@ -776,8 +851,8 @@ export async function handleMockApiRequest(
     return fdr;
   }
 
-  // --- /fdrs/:id/review ---
-  const reviewMatch = cleanPath.match(/^\/fdrs\/([^/]+)\/review$/);
+  // --- /fdrs/:id/scrutiny or /review ---
+  const reviewMatch = cleanPath.match(/^\/fdrs\/([^/]+)\/(?:scrutiny|review)$/);
   if (reviewMatch && method === "POST") {
     const fdrId = reviewMatch[1];
     const { decision, reason } = (options.body || {}) as { decision: string; reason: string };
@@ -813,8 +888,8 @@ export async function handleMockApiRequest(
     return fdr;
   }
 
-  // --- /fdrs/:id/renew (Replacement) ---
-  const renewMatch = cleanPath.match(/^\/fdrs\/([^/]+)\/renew$/);
+  // --- /fdrs/:id/replacements or renew ---
+  const renewMatch = cleanPath.match(/^\/fdrs\/([^/]+)\/(?:replacements|renew)$/);
   if (renewMatch && method === "POST") {
     const fdrId = renewMatch[1];
     const body = (options.body || {}) as {
@@ -886,16 +961,20 @@ export async function handleMockApiRequest(
     return newFdr;
   }
 
-  // --- /verification/simulate ---
-  if (cleanPath === "/verification/simulate" && method === "POST") {
-    const { fdr_id, scenario_id } = (options.body || {}) as {
-      fdr_id: string;
-      scenario_id: string;
+  // --- /fdrs/:fdrId/mock-bank-check or /verification/simulate ---
+  const bankCheckMatch = cleanPath.match(/^\/fdrs\/([^/]+)\/mock-bank-check$/);
+  if (bankCheckMatch || (cleanPath === "/verification/simulate" && method === "POST")) {
+    const fdrId = bankCheckMatch ? bankCheckMatch[1] : ((options.body || {}) as { fdr_id: string }).fdr_id;
+    const { scenario_id, scenario } = (options.body || {}) as {
+      scenario_id?: string;
+      scenario?: string;
     };
-    const fdr = mockStore.fdrs.find((f) => f.id === fdr_id);
+    const activeScenario = scenario_id || scenario || "MATCH";
+
+    const fdr = mockStore.fdrs.find((f) => f.id === fdrId);
     if (!fdr) throw new Error("FDR not found");
 
-    if (scenario_id === "INVALID_SIGNATURE") {
+    if (activeScenario === "INVALID_SIGNATURE") {
       mockStore.addAuditEvent(
         "BANK_VERIFICATION",
         fdr.id,
@@ -916,16 +995,16 @@ export async function handleMockApiRequest(
     let message = "Core Banking inquiry confirmed instrument validity and AICTE lien.";
     let lienClaim = "LIEN_MARKED_AICTE";
 
-    if (scenario_id === "AMOUNT_MISMATCH") {
+    if (activeScenario === "AMOUNT_MISMATCH") {
       result = "DIFFERENCE_REPORTED";
       message = "Bank CBS reported principal amount as ₹20,00,000.00 instead of declared ₹25,00,000.00.";
       fdr.status.bank_verification_status = "DIFFERENCE_REPORTED";
-    } else if (scenario_id === "LIEN_NOT_MARKED") {
+    } else if (activeScenario === "LIEN_NOT_MARKED") {
       result = "DIFFERENCE_REPORTED";
       message = "Bank CBS confirmed deposit exists, but lien is NOT marked to AICTE.";
       lienClaim = "LIEN_NOT_MARKED";
       fdr.status.bank_verification_status = "DIFFERENCE_REPORTED";
-    } else if (scenario_id === "ACCOUNT_CLOSED") {
+    } else if (activeScenario === "ACCOUNT_CLOSED") {
       result = "DIFFERENCE_REPORTED";
       message = "Bank CBS reported account has been liquidated or prematurely closed.";
       lienClaim = "LIQUIDATED";
@@ -941,21 +1020,21 @@ export async function handleMockApiRequest(
       id: checkId,
       check_type: "CORE_BANKING_INQUIRY",
       source_kind: "MOCK_BANK",
-      scenario_id,
+      scenario_id: activeScenario,
       result,
       is_simulated: true,
       message,
       match_results: {
-        principal: scenario_id === "AMOUNT_MISMATCH" ? "DIFFERS" : "MATCH",
-        lien: scenario_id === "LIEN_NOT_MARKED" ? "DIFFERS" : "MATCH",
-        account_status: scenario_id === "ACCOUNT_CLOSED" ? "CLOSED" : "ACTIVE",
+        principal: activeScenario === "AMOUNT_MISMATCH" ? "DIFFERS" : "MATCH",
+        lien: activeScenario === "LIEN_NOT_MARKED" ? "DIFFERS" : "MATCH",
+        account_status: activeScenario === "ACCOUNT_CLOSED" ? "CLOSED" : "ACTIVE",
       },
       lien_claim: lienClaim,
       response_hash: Math.random().toString(16).substring(2, 32),
       correlation_id: `sim-cbs-${Date.now()}`,
       performed_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 90 * 86400000).toISOString(),
-      provenance_note: `Mock bank check (${scenario_id}) executed via simulation engine.`,
+      provenance_note: `Mock bank check (${activeScenario}) executed via simulation engine.`,
     };
 
     fdr.verification_checks.unshift(newCheck);
@@ -965,19 +1044,26 @@ export async function handleMockApiRequest(
       fdr.id,
       "CBS_INQUIRY_SIMULATION",
       result,
-      `Bank simulation check executed (${scenario_id}). Result: ${result}`,
+      `Bank simulation check executed (${activeScenario}). Result: ${result}`,
     );
     mockStore.save();
     return newCheck;
   }
 
-  // --- /fdrs/:id (Detail) ---
-  const fdrDetailMatch = cleanPath.match(/^\/fdrs\/([^/]+)$/);
-  if (fdrDetailMatch) {
-    const fdrId = fdrDetailMatch[1];
+  // --- /fdrs/:fdrId/documents/:documentId/reparse ---
+  const reparseMatch = cleanPath.match(/^\/fdrs\/([^/]+)\/documents\/([^/]+)\/reparse$/);
+  if (reparseMatch && method === "POST") {
+    const [, fdrId, docId] = reparseMatch;
     const fdr = mockStore.fdrs.find((f) => f.id === fdrId);
-    if (!fdr) throw new Error("FDR not found");
-    return fdr;
+    return {
+      document_id: docId,
+      scan_status: "PASSED",
+      scan_detail: "Clean OCR extraction completed.",
+      processing_status: "COMPLETED",
+      extraction_status: "COMPLETED",
+      evidence_fields: fdr?.evidence_fields || [],
+      document_processing_status: "COMPLETED",
+    };
   }
 
   // --- /fdrs/:fdrId/documents/:documentId/download-ticket ---
@@ -990,8 +1076,17 @@ export async function handleMockApiRequest(
     };
   }
 
-  // --- /uploads ---
-  if (cleanPath === "/uploads" && method === "POST") {
+  // --- /fdrs/:id (Detail) ---
+  const fdrDetailMatch = cleanPath.match(/^\/fdrs\/([^/]+)$/);
+  if (fdrDetailMatch) {
+    const fdrId = fdrDetailMatch[1];
+    const fdr = mockStore.fdrs.find((f) => f.id === fdrId);
+    if (!fdr) throw new Error("FDR not found");
+    return fdr;
+  }
+
+  // --- /upload-sessions & /uploads ---
+  if ((cleanPath === "/upload-sessions" || cleanPath === "/uploads") && method === "POST") {
     const sessionRes: UploadSession = {
       upload_session_id: `upload-${Date.now()}`,
       upload_url: `/api/v1/uploads/chunk/simulated`,
@@ -1004,8 +1099,8 @@ export async function handleMockApiRequest(
     return sessionRes;
   }
 
-  // --- /uploads/:id/finalize ---
-  const finalizeMatch = cleanPath.match(/^\/uploads\/([^/]+)\/finalize$/);
+  // --- /upload-sessions/:sessionId/finalize & /uploads/:id/finalize ---
+  const finalizeMatch = cleanPath.match(/^\/(?:upload-sessions|uploads)\/([^/]+)\/finalize$/);
   if (finalizeMatch && method === "POST") {
     const { fdr_id, filename } = (options.body || {}) as {
       fdr_id: string;
@@ -1059,14 +1154,18 @@ export async function handleMockApiRequest(
     return mockStore.notifications;
   }
 
-  // --- /notifications/unread ---
-  if (cleanPath === "/notifications/unread") {
+  // --- /notifications/unread-count & /notifications/unread ---
+  if (cleanPath === "/notifications/unread-count" || cleanPath === "/notifications/unread") {
     const count = mockStore.notifications.filter((n) => n.status === "UNREAD").length;
-    return { count };
+    return {
+      unread: count,
+      action_required: count > 0 ? 1 : 0,
+      count,
+    };
   }
 
-  // --- /notifications/:id/read ---
-  const notifReadMatch = cleanPath.match(/^\/notifications\/([^/]+)\/read$/);
+  // --- /notifications/:id/:mode (read | ack) ---
+  const notifReadMatch = cleanPath.match(/^\/notifications\/([^/]+)\/(read|ack)$/);
   if (notifReadMatch && method === "POST") {
     const notifId = notifReadMatch[1];
     const n = mockStore.notifications.find((notif) => notif.id === notifId);
@@ -1075,11 +1174,11 @@ export async function handleMockApiRequest(
       n.read_at = new Date().toISOString();
       mockStore.save();
     }
-    return { ok: true };
+    return n || { id: notifId, status: "READ" };
   }
 
-  // --- /audit ---
-  if (cleanPath === "/audit") {
+  // --- /audit-events & /audit ---
+  if (cleanPath === "/audit-events" || cleanPath === "/audit") {
     let list = [...mockStore.auditEvents].reverse();
     if (query.aggregate_type) {
       list = list.filter((e) => e.aggregate_type === query.aggregate_type);
@@ -1087,18 +1186,21 @@ export async function handleMockApiRequest(
     return list;
   }
 
-  // --- /audit/integrity ---
-  if (cleanPath === "/audit/integrity") {
+  // --- /audit-events/integrity & /audit/integrity ---
+  if (cleanPath === "/audit-events/integrity" || cleanPath === "/audit/integrity") {
     return {
+      verified: true,
       valid: true,
+      events_checked: mockStore.auditEvents.length,
       verified_count: mockStore.auditEvents.length,
+      first_divergence: null,
+      tampered_events: [],
       head_digest:
         mockStore.auditEvents[mockStore.auditEvents.length - 1]?.integrity_digest ||
         "0000000000000000",
       algorithm: "SHA-256",
-      tampered_events: [],
-      message:
-        "Cryptographic digest chain verified intact. Every event links to predecessor with zero discrepancies.",
+      note: "Cryptographic digest chain verified intact. Every event links to predecessor with zero discrepancies.",
+      message: "Cryptographic digest chain verified intact. Every event links to predecessor with zero discrepancies.",
     };
   }
 
@@ -1133,5 +1235,5 @@ export async function handleMockApiRequest(
 
   // Fallback
   console.warn("Unmatched mock API route:", method, cleanPath);
-  return { ok: true };
+  return [];
 }
